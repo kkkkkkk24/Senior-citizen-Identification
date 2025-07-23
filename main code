@@ -1,49 +1,73 @@
+#Install Required Libraries
+pip install opencv-python deepface pandas openpyxl
+
+
+
+#Python Code: senior_citizen_detection.py
 import cv2
 from deepface import DeepFace
-import pandas as pd
 from datetime import datetime
+import pandas as pd
+import os
 
-# Initialize video feed
-cap = cv2.VideoCapture(0)
-data = []
+# Output file
+csv_path = "population-regions new.csv"
+
+# Create CSV if not exists
+if not os.path.exists(csv_path):
+    df = pd.DataFrame(columns=["Age", "Gender", "Senior_Citizen", "Timestamp"])
+    df.to_csv(csv_path, index=False)
+
+# Load video or webcam
+cap = cv2.VideoCapture(0)  # Use 0 for webcam; replace with video file path if needed
+
+face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+
+print("Starting video stream. Press 'q' to quit.")
 
 while True:
     ret, frame = cap.read()
     if not ret:
         break
 
-    try:
-        # Analyze frame using DeepFace
-        result = DeepFace.analyze(frame, actions=['age', 'gender'], enforce_detection=False)
+    # Convert frame to grayscale for face detection
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        for face in result:
-            age = face['age']
-            gender = face['gender']
-            x, y, w, h = face['region']['x'], face['region']['y'], face['region']['w'], face['region']['h']
+    # Detect faces
+    faces = face_cascade.detectMultiScale(gray, 1.3, 5)
 
-            # Draw rectangle around face
-            color = (0, 255, 0) if age <= 60 else (0, 0, 255)
-            label = f"{gender}, {age}"
-            cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-            cv2.putText(frame, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+    for (x, y, w, h) in faces:
+        # Draw rectangle around face
+        face_img = frame[y:y+h, x:x+w]
+        try:
+            # Predict age & gender
+            result = DeepFace.analyze(face_img, actions=['age', 'gender'], enforce_detection=False)
+            age = result[0]['age']
+            gender = result[0]['gender']
 
-            # Log senior citizens
-            if age > 60:
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                data.append({"Age": age, "Gender": gender, "Timestamp": timestamp})
+            # Check senior status
+            is_senior = age > 60
 
-    except Exception as e:
-        print(f"Error: {e}")
+            # Draw bounding box with label
+            label = f"{gender}, Age: {age}"
+            color = (0, 255, 0) if is_senior else (255, 0, 0)
+            cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
+            cv2.putText(frame, label, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+
+            # Log to CSV
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            log_data = pd.DataFrame([[age, gender, is_senior, timestamp]],
+                                    columns=["Age", "Gender", "Senior_Citizen", "Timestamp"])
+            log_data.to_csv(csv_path, mode='a', header=False, index=False)
+
+        except Exception as e:
+            print("Error analyzing face:", e)
 
     cv2.imshow("Senior Citizen Detection", frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
-# Release resources
+# Cleanup
 cap.release()
 cv2.destroyAllWindows()
-
-# Save to CSV
-df = pd.DataFrame(data)
-df.to_csv("senior_citizens.csv", index=False)
